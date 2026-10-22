@@ -2,115 +2,164 @@ import streamlit as st
 import pandas as pd
 import urllib.parse
 import plotly.express as px
+import plotly.graph_objects as go
 
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Projects Update Dashboard",
-    page_icon="📊",
-    layout="wide"
+    page_title="Master Project Tracking Dashboard",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
 
+# 2. Executive Dashboard CSS
 st.markdown("""
     <style>
-    .stMetric {
-        background-color: #f8f9fa;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 5px solid #2e7bcf;
+    /* Metric Card Styling */
+    div[data-testid="metric-container"] {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
+        border-left: 5px solid #0052cc;
     }
-    .stMetric label, .stMetric [data-testid="stMetricValue"] {
-        color: #1f1f1f !important; 
+    /* Enforce dark text on metric cards regardless of device theme */
+    div[data-testid="metric-container"] > label, 
+    div[data-testid="metric-container"] > div {
+        color: #1f1f1f !important;
     }
+    /* Clean up the UI */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 
 
 # ==========================================
-# DASHBOARD CONFIGURATION
+# SINGLE TAB CONFIGURATION
 # ==========================================
 SHEET_ID = "1RczkaAj-y4RuQPFOC_lZAbWKK7nA4vmcQJmdhCQkb2E"
-
-
-# Map each tab to the number of rows to SKIP before hitting the actual column headers.
-# If headers are on Row 4, skip 3. If headers are on Row 1, skip 0.
-TAB_CONFIG = {
-    "Master Project List": 3, 
-    "Financial Summary": 0,   # Update this to the correct number for this tab
-    "Critical Projects": 0,   # Update this
-    "Anupam": 3, 
-    "Bigan": 3, 
-    "Mufti": 3, 
-    "Sashesh": 3, 
-    "Kavita": 3, 
-    "Pramod": 3
-}
+TARGET_TAB = "Master Project List"
+ROWS_TO_SKIP = 3  # The actual column headers start on row 4
 # ==========================================
 
 
-# 2. Live Google Sheet Loader (Now accepts dynamic skiprows)
+# 3. Targeted Data Loader
 @st.cache_data(ttl=600)
-def load_google_sheet(sheet_id, sheet_name, rows_to_skip):
+def load_master_data(sheet_id, sheet_name, skiprows):
     encoded_sheet_name = urllib.parse.quote(sheet_name)
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={encoded_sheet_name}"
     
-    # Read the data using the specific skiprows value for this tab
-    df = pd.read_csv(url, skiprows=rows_to_skip)
+    df = pd.read_csv(url, skiprows=skiprows)
+    df = df.dropna(how='all', axis=1).dropna(how='all', axis=0)
     
-    # Clean up empty columns and rows
-    df = df.dropna(how='all', axis=1)
-    df = df.dropna(how='all', axis=0)
+    # Filter out grand total rows that skew evaluation metrics
+    if df.columns[0] and len(df) > 0:
+        df = df[~df[df.columns[0]].astype(str).str.contains("TOTAL", case=False, na=False)]
     
+    # Auto-clean financial columns for calculation
+    financial_keywords = ['Cost', 'Grant', 'Contribution', 'Loan', 'Disbursed', 'Amount']
+    for col in df.columns:
+        if any(keyword.lower() in col.lower() for keyword in financial_keywords):
+            df[col] = df[col].astype(str).str.replace(r'[₹, ]', '', regex=True)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
     return df
 
 
-# 3. Sidebar Navigation
-st.sidebar.header("📁 Navigation")
-# Extract just the tab names from our dictionary for the dropdown menu
-available_tabs = list(TAB_CONFIG.keys())
-selected_tab = st.sidebar.selectbox("Select a Sheet to View", available_tabs)
-
-
-st.title(f"📊 Live Analysis: {selected_tab}")
+st.title("🎯 Master Project Portfolio")
+st.markdown("Live operational and financial evaluation metrics for all active enterprise entities.")
 st.divider()
 
 
 try:
-    with st.spinner('Pulling live data from Google Sheets...'):
-        # Look up the correct skiprows value for the selected tab
-        skip_count = TAB_CONFIG[selected_tab]
-        df = load_google_sheet(SHEET_ID, selected_tab, skip_count)
+    with st.spinner('Fetching live operational data...'):
+        df = load_master_data(SHEET_ID, TARGET_TAB, ROWS_TO_SKIP)
     
-    # 4. Top Level KPI Metrics
-    c1, c2, c3 = st.columns(3)
-    c1.metric(f"Total Records in {selected_tab}", f"{len(df):,}")
+    # Identify key columns dynamically based on your screenshot
+    entity_col = next((c for c in df.columns if 'entity' in c.lower() or 'name' in c.lower()), None)
+    cost_col = next((c for c in df.columns if 'total project cost' in c.lower()), None)
+    disbursed_col = next((c for c in df.columns if 'disbursed' in c.lower()), None)
+    value_chain_col = next((c for c in df.columns if 'value chain' in c.lower()), None)
     
-    if 'Total Project Cost' in df.columns:
-        df['Clean Cost'] = df['Total Project Cost'].astype(str).str.replace(r'[₹, ]', '', regex=True)
-        df['Clean Cost'] = pd.to_numeric(df['Clean Cost'], errors='coerce').fillna(0)
-        total_cost = df['Clean Cost'].sum()
-        c2.metric("Total Project Cost", f"₹ {total_cost:,.0f}")
+    # 4. Top Level Operational KPIs
+    c1, c2, c3, c4 = st.columns(4)
+    
+    c1.metric("Active Entities", f"{len(df):,}")
+    
+    if value_chain_col:
+        c2.metric("Distinct Value Chains", f"{df[value_chain_col].nunique():,}")
+    
+    if cost_col and disbursed_col:
+        total_portfolio = df[cost_col].sum()
+        total_disbursed = df[disbursed_col].sum()
+        disbursement_rate = (total_disbursed / total_portfolio * 100) if total_portfolio > 0 else 0
         
-    if 'State' in df.columns:
-        c3.metric("States Covered", f"{df['State'].nunique()}")
+        c3.metric("Total Portfolio Value", f"₹ {total_portfolio:,.0f}")
+        c4.metric("Total Funds Disbursed", f"₹ {total_disbursed:,.0f}", f"{disbursement_rate:.1f}% Execution Rate")
 
 
-    st.divider()
+    st.write("") 
+
+
+    # 5. Interactive Visualizations
+    chart_col1, chart_col2 = st.columns([6, 4])
     
-    # 5. Visualizations
-    if 'State' in df.columns and not df.empty:
-        st.subheader(f"Projects by State")
-        state_counts = df['State'].value_counts().reset_index()
-        state_counts.columns = ['State', 'Count']
-        fig = px.bar(state_counts, x='State', y='Count', template='plotly_white')
-        st.plotly_chart(fig, use_container_width=True)
+    with chart_col1:
+        st.subheader("Financial Tranche Status by Entity")
+        if entity_col and cost_col and disbursed_col:
+            # Prepare data for dual-bar chart
+            chart_df = df.groupby(entity_col)[[cost_col, disbursed_col]].sum().reset_index()
+            chart_df = chart_df.sort_values(by=cost_col, ascending=True).tail(12) # Top 12 by size
+            
+            fig_bar = go.Figure()
+            fig_bar.add_trace(go.Bar(
+                y=chart_df[entity_col], x=chart_df[cost_col], 
+                name='Approved Cost', orientation='h', marker_color='#0052cc'
+            ))
+            fig_bar.add_trace(go.Bar(
+                y=chart_df[entity_col], x=chart_df[disbursed_col], 
+                name='Disbursed Amount', orientation='h', marker_color='#36b37e'
+            ))
+            
+            fig_bar.update_layout(
+                barmode='group', 
+                template='plotly_white',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0, r=0, t=30, b=0)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("Awaiting structural financial columns to render execution progress.")
 
 
-    # 6. Data View
-    st.subheader("Live Data Preview")
-    st.dataframe(df, use_container_width=True)
+    with chart_col2:
+        st.subheader("Value Chain Distribution")
+        if value_chain_col and cost_col:
+            pie_df = df.groupby(value_chain_col)[cost_col].sum().reset_index()
+            
+            fig_pie = px.pie(
+                pie_df, 
+                values=cost_col, 
+                names=value_chain_col, 
+                hole=0.4, 
+                template='plotly_white',
+                color_discrete_sequence=px.colors.qualitative.Prism
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent')
+            fig_pie.update_layout(margin=dict(l=0, r=0, t=30, b=0), showlegend=True)
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("Awaiting value chain categorization columns.")
+
+
+    # 6. Granular Data Inspector
+    with st.expander("🔍 View Raw Monitoring Data"):
+        st.dataframe(df, use_container_width=True)
     
 except Exception as e:
-    st.error("⚠️ Could not load data. Check the TAB_CONFIG numbers or sharing settings.")
-    st.write(f"Technical Error Details: {e}")
+    st.error("⚠️ Connection interrupted or data structure altered.")
+    st.write(f"Diagnostic Output: {e}")
