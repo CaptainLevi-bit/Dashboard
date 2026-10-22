@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
+import urllib.parse
+import plotly.express as px
 
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Live Google Sheet Dashboard",
-    page_icon="🔄",
+    page_title="Projects Update Dashboard",
+    page_icon="📊",
     layout="wide"
 )
 
 
-# 2. Fix for Dark Mode text visibility
 st.markdown("""
     <style>
     .stMetric {
@@ -27,56 +28,89 @@ st.markdown("""
 
 
 # ==========================================
-# 🛑 UPDATE THESE TWO VARIABLES 🛑
+# DASHBOARD CONFIGURATION
 # ==========================================
-# Paste your specific Google Sheet ID here
-SHEET_ID = "https://docs.google.com/spreadsheets/d/1RczkaAj-y4RuQPFOC_lZAbWKK7nA4vmcQJmdhCQkb2E/edit?gid=834679604#gid=834679604"
+SHEET_ID = "1RczkaAj-y4RuQPFOC_lZAbWKK7nA4vmcQJmdhCQkb2E"
 
 
-# Type the exact names of the tabs at the bottom of your Google Sheet
-TAB_NAMES = ["Dashboard", "Master Project List", "Critical Projects"] 
+# Map each tab to the number of rows to SKIP before hitting the actual column headers.
+# If headers are on Row 4, skip 3. If headers are on Row 1, skip 0.
+TAB_CONFIG = {
+    "Master Project List": 3, 
+    "Financial Summary": 0,   # Update this to the correct number for this tab
+    "Critical Projects": 0,   # Update this
+    "Anupam": 3, 
+    "Bigan": 3, 
+    "Mufti": 3, 
+    "Sashesh": 3, 
+    "Kavita": 3, 
+    "Pramod": 3
+}
 # ==========================================
 
 
-# 3. Live Google Sheet Loader
-# ttl=600 clears the cache and pulls fresh data every 10 minutes
+# 2. Live Google Sheet Loader (Now accepts dynamic skiprows)
 @st.cache_data(ttl=600)
-def load_google_sheet(sheet_id, sheet_name):
-    # This URL forces Google Sheets to export the specific tab as a readable CSV format
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+def load_google_sheet(sheet_id, sheet_name, rows_to_skip):
+    encoded_sheet_name = urllib.parse.quote(sheet_name)
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={encoded_sheet_name}"
     
-    # Read the live URL directly into pandas
-    return pd.read_csv(url)
+    # Read the data using the specific skiprows value for this tab
+    df = pd.read_csv(url, skiprows=rows_to_skip)
+    
+    # Clean up empty columns and rows
+    df = df.dropna(how='all', axis=1)
+    df = df.dropna(how='all', axis=0)
+    
+    return df
 
 
-# 4. Sidebar Navigation
+# 3. Sidebar Navigation
 st.sidebar.header("📁 Navigation")
-selected_tab = st.sidebar.selectbox("Select a Sheet to View", TAB_NAMES)
+# Extract just the tab names from our dictionary for the dropdown menu
+available_tabs = list(TAB_CONFIG.keys())
+selected_tab = st.sidebar.selectbox("Select a Sheet to View", available_tabs)
 
 
-# 5. Dashboard Display
-st.title(f"🔄 Live Analysis: {selected_tab}")
-st.markdown("This dashboard pulls live data directly from Google Sheets.")
+st.title(f"📊 Live Analysis: {selected_tab}")
 st.divider()
 
 
 try:
-    # Load the data for the selected tab
-    df = load_google_sheet(SHEET_ID, selected_tab)
+    with st.spinner('Pulling live data from Google Sheets...'):
+        # Look up the correct skiprows value for the selected tab
+        skip_count = TAB_CONFIG[selected_tab]
+        df = load_google_sheet(SHEET_ID, selected_tab, skip_count)
     
-    # Top Level KPI Metrics
-    c1, c2 = st.columns(2)
-    c1.metric(f"Rows in {selected_tab}", f"{len(df):,}")
-    c2.metric("Total Columns", f"{len(df.columns):,}")
+    # 4. Top Level KPI Metrics
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"Total Records in {selected_tab}", f"{len(df):,}")
+    
+    if 'Total Project Cost' in df.columns:
+        df['Clean Cost'] = df['Total Project Cost'].astype(str).str.replace(r'[₹, ]', '', regex=True)
+        df['Clean Cost'] = pd.to_numeric(df['Clean Cost'], errors='coerce').fillna(0)
+        total_cost = df['Clean Cost'].sum()
+        c2.metric("Total Project Cost", f"₹ {total_cost:,.0f}")
+        
+    if 'State' in df.columns:
+        c3.metric("States Covered", f"{df['State'].nunique()}")
 
 
     st.divider()
+    
+    # 5. Visualizations
+    if 'State' in df.columns and not df.empty:
+        st.subheader(f"Projects by State")
+        state_counts = df['State'].value_counts().reset_index()
+        state_counts.columns = ['State', 'Count']
+        fig = px.bar(state_counts, x='State', y='Count', template='plotly_white')
+        st.plotly_chart(fig, use_container_width=True)
 
 
-    # Data View
+    # 6. Data View
     st.subheader("Live Data Preview")
     st.dataframe(df, use_container_width=True)
     
 except Exception as e:
-    st.error("⚠️ Could not load data. Please ensure the Google Sheet is shared as 'Anyone with the link can view' and that your Sheet ID and Tab Names are typed exactly correctly.")
+    st.error("⚠️ Could not load data. Check the TAB_CONFIG numbers or sharing settings.")
     st.write(f"Technical Error Details: {e}")
