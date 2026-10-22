@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 
-# 2. Executive Dashboard CSS
+# 2. Executive Dashboard CSS (Menu is now unhidden)
 st.markdown("""
     <style>
     div[data-testid="metric-container"] {
@@ -29,8 +29,6 @@ st.markdown("""
     div[data-testid="metric-container"] > div {
         color: #1f1f1f !important;
     }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -40,27 +38,40 @@ st.markdown("""
 # ==========================================
 SHEET_ID = "1RczkaAj-y4RuQPFOC_lZAbWKK7nA4vmcQJmdhCQkb2E"
 TARGET_TAB = "Master Project List"
-ROWS_TO_SKIP = 3  
 # ==========================================
 
 
-# 3. Bulletproof Data Loader
+# 3. Auto-Detecting Data Loader (Bulletproof)
 @st.cache_data(ttl=600)
-def load_master_data(sheet_id, sheet_name, skiprows):
+def load_master_data(sheet_id, sheet_name):
     encoded_sheet_name = urllib.parse.quote(sheet_name)
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={encoded_sheet_name}"
     
-    df = pd.read_csv(url, skiprows=skiprows)
+    # Read the raw sheet WITHOUT skipping rows
+    df_raw = pd.read_csv(url, header=None)
+    
+    # Automatically scan the first 10 rows to find the true header row
+    header_idx = 0
+    for i, row in df_raw.head(10).iterrows():
+        row_text = ' '.join(row.astype(str).str.lower())
+        if 'entity' in row_text or 'cost' in row_text:
+            header_idx = i
+            break
+            
+    # Set the columns to the detected header row and keep the data below it
+    df = df_raw.iloc[header_idx + 1:].reset_index(drop=True)
+    df.columns = df_raw.iloc[header_idx]
+    
     df = df.dropna(how='all', axis=1).dropna(how='all', axis=0)
     
-    # CRITICAL FIX: Convert all columns to lowercase string, strip every non-alphanumeric character, and remove extra spaces.
-    # This guarantees "Total Project \n Cost" becomes "total project cost" every single time.
+    # Clean the column names to be perfectly uniform
     df.columns = df.columns.astype(str).str.replace(r'[^a-zA-Z0-9 ]', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip().str.lower()
     
+    # Filter out total rows
     if len(df.columns) > 0 and len(df) > 0:
         df = df[~df[df.columns[0]].astype(str).str.contains("total", case=False, na=False)]
     
-    # Aggressively strip currency symbols and commas before converting to numeric
+    # Convert financial text to numbers
     financial_keywords = ['cost', 'grant', 'contribution', 'loan', 'disbursed', 'amount']
     for col in df.columns:
         if any(keyword in col for keyword in financial_keywords):
@@ -77,7 +88,7 @@ st.divider()
 
 try:
     with st.spinner('Fetching live operational data...'):
-        df = load_master_data(SHEET_ID, TARGET_TAB, ROWS_TO_SKIP)
+        df = load_master_data(SHEET_ID, TARGET_TAB)
     
     # Search uses the guaranteed cleaned lowercase strings
     entity_col = next((c for c in df.columns if 'entity' in c or 'name' in c), None)
