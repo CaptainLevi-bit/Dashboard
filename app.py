@@ -17,7 +17,6 @@ st.set_page_config(
 # 2. Executive Dashboard CSS
 st.markdown("""
     <style>
-    /* Metric Card Styling */
     div[data-testid="metric-container"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -26,12 +25,10 @@ st.markdown("""
         box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
         border-left: 5px solid #0052cc;
     }
-    /* Enforce dark text on metric cards regardless of device theme */
     div[data-testid="metric-container"] > label, 
     div[data-testid="metric-container"] > div {
         color: #1f1f1f !important;
     }
-    /* Clean up the UI */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
@@ -43,7 +40,7 @@ st.markdown("""
 # ==========================================
 SHEET_ID = "1RczkaAj-y4RuQPFOC_lZAbWKK7nA4vmcQJmdhCQkb2E"
 TARGET_TAB = "Master Project List"
-ROWS_TO_SKIP = 3  # The actual column headers start on row 4
+ROWS_TO_SKIP = 3  
 # ==========================================
 
 
@@ -56,11 +53,12 @@ def load_master_data(sheet_id, sheet_name, skiprows):
     df = pd.read_csv(url, skiprows=skiprows)
     df = df.dropna(how='all', axis=1).dropna(how='all', axis=0)
     
-    # Filter out grand total rows that skew evaluation metrics
+    # CRITICAL FIX: Flatten column headers by replacing hidden newlines with spaces
+    df.columns = df.columns.str.replace(r'\n|\r', ' ', regex=True).str.replace('  ', ' ').str.strip()
+    
     if df.columns[0] and len(df) > 0:
         df = df[~df[df.columns[0]].astype(str).str.contains("TOTAL", case=False, na=False)]
     
-    # Auto-clean financial columns for calculation
     financial_keywords = ['Cost', 'Grant', 'Contribution', 'Loan', 'Disbursed', 'Amount']
     for col in df.columns:
         if any(keyword.lower() in col.lower() for keyword in financial_keywords):
@@ -79,7 +77,6 @@ try:
     with st.spinner('Fetching live operational data...'):
         df = load_master_data(SHEET_ID, TARGET_TAB, ROWS_TO_SKIP)
     
-    # Identify key columns dynamically based on your screenshot
     entity_col = next((c for c in df.columns if 'entity' in c.lower() or 'name' in c.lower()), None)
     cost_col = next((c for c in df.columns if 'total project cost' in c.lower()), None)
     disbursed_col = next((c for c in df.columns if 'disbursed' in c.lower()), None)
@@ -111,9 +108,8 @@ try:
     with chart_col1:
         st.subheader("Financial Tranche Status by Entity")
         if entity_col and cost_col and disbursed_col:
-            # Prepare data for dual-bar chart
             chart_df = df.groupby(entity_col)[[cost_col, disbursed_col]].sum().reset_index()
-            chart_df = chart_df.sort_values(by=cost_col, ascending=True).tail(12) # Top 12 by size
+            chart_df = chart_df.sort_values(by=cost_col, ascending=True).tail(12) 
             
             fig_bar = go.Figure()
             fig_bar.add_trace(go.Bar(
@@ -156,7 +152,6 @@ try:
             st.info("Awaiting value chain categorization columns.")
 
 
-    # 6. Granular Data Inspector
     with st.expander("🔍 View Raw Monitoring Data"):
         st.dataframe(df, use_container_width=True)
     
